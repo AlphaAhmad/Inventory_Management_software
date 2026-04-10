@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS phone_details (
     storage_gb INT DEFAULT 0,
     ram_gb INT DEFAULT 0,
     color TEXT DEFAULT '',
-    region_variant TEXT DEFAULT ''
+    region_variant TEXT DEFAULT '',
+    serial_number TEXT DEFAULT ''
 );
 
 -- Index for faster product lookups

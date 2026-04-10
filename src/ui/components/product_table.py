@@ -52,6 +52,11 @@ class ProductTable(QTableWidget):
             self.view_requested.emit(product.id)
 
     def load_products(self, products: list[Product]):
+        # Sort: in_stock first, then claimed, then sold (bottom)
+        # Preserves the original order within each group via stable sort.
+        status_order = {"in_stock": 0, "claimed": 1, "sold": 2}
+        products = sorted(products, key=lambda p: status_order.get(p.status, 99))
+
         self._products = products
         self.setSortingEnabled(False)
         self.setRowCount(len(products))

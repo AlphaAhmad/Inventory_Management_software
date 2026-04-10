@@ -108,21 +108,38 @@ def run_async(parent, fn, on_success, on_error=None, message="Loading..."):
 
     worker = WorkerThread(fn)
 
+    # Keep a list of active workers on the parent so multiple concurrent
+    # async calls don't overwrite each other and trigger GC mid-run.
+    if not hasattr(parent, '_active_workers'):
+        parent._active_workers = []
+    parent._active_workers.append(worker)
+
+    def _cleanup():
+        try:
+            parent._active_workers.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+        worker.deleteLater()
+
     def _on_done(result):
         if overlay:
             overlay.hide_overlay()
-        on_success(result)
+        try:
+            on_success(result)
+        finally:
+            _cleanup()
 
     def _on_err(error_msg):
         if overlay:
             overlay.hide_overlay()
-        if on_error:
-            on_error(error_msg)
-        else:
-            QMessageBox.critical(parent, "Error", error_msg)
+        try:
+            if on_error:
+                on_error(error_msg)
+            else:
+                QMessageBox.critical(parent, "Error", error_msg)
+        finally:
+            _cleanup()
 
     worker.finished.connect(_on_done)
     worker.error.connect(_on_err)
-    # Prevent garbage collection
-    parent._worker = worker
     worker.start()

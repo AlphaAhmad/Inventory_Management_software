@@ -136,6 +136,8 @@ class TransactionDetailsDialog(QDialog):
                 add_form_row(phone_form, "Type", p.phone_type.replace("_", " ").title())
                 if p.condition:
                     add_form_row(phone_form, "Condition", p.condition.title())
+                if p.serial_number:
+                    add_form_row(phone_form, "Serial No", p.serial_number)
                 if p.imei1:
                     add_form_row(phone_form, "IMEI 1", p.imei1)
                 if p.imei2:

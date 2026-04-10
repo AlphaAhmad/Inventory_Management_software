@@ -36,7 +36,9 @@ class DynamicFormDialog(QDialog):
         self._fixed_subcategory_id = subcategory_id
         self._fixed_brand_name = brand_name
         self._attr_widgets: dict[str, QWidget] = {}
-        self._imei_rows: list[tuple[QLineEdit, QLineEdit]] = []  # (imei1, imei2) per unit
+        self._imei_rows: list = []  # list of dicts (one per unit)
+        self._is_tablet = False
+        self._is_ipad = False
 
         self.setWindowTitle("Edit Product" if self.is_edit else "Add New Product")
         self.setMinimumWidth(550)
@@ -246,19 +248,13 @@ class DynamicFormDialog(QDialog):
         """Rebuild IMEI input rows to match the given count."""
         old_values = []
         for row in self._imei_rows:
-            if isinstance(row, tuple):
-                old_values.append({
-                    'imei1': row[0].text(), 'imei2': row[1].text(),
-                    'color': self.color_input.text() if hasattr(self, 'color_input') else "",
-                    'variant': self.region_variant_input.text() if hasattr(self, 'region_variant_input') else "",
-                    'purch': self.purchase_price_input.value() if hasattr(self, 'purchase_price_input') else 0.0,
-                    'sale': self.sale_price_input.value() if hasattr(self, 'sale_price_input') else 0.0
-                })
-            else:
+            if isinstance(row, dict):
                 old_values.append({
                     'imei1': row['imei1'].text(), 'imei2': row['imei2'].text(),
                     'color': row['color'].text(), 'variant': row['variant'].text(),
-                    'purch': row['purch'].value(), 'sale': row['sale'].value()
+                    'purch': row['purch'].value(), 'sale': row['sale'].value(),
+                    'serial': row.get('serial').text() if row.get('serial') else "",
+                    'has_sim': row.get('has_sim').isChecked() if row.get('has_sim') else False,
                 })
 
         # Clear old rows
@@ -268,53 +264,97 @@ class DynamicFormDialog(QDialog):
                 item.widget().deleteLater()
         self._imei_rows.clear()
 
-        brand_text = self.brand_input.text().lower()
-        
         for i in range(count):
             frame = QFrame()
             frame.setStyleSheet(f"QFrame {{ border: 1px solid {COLORS.get('border', '#333')}; border-radius: 6px; padding: 4px; background: transparent; }}")
             grid = QGridLayout(frame)
             grid.setContentsMargins(8, 8, 8, 8)
             grid.setSpacing(6)
-            
-            lbl = QLabel(f"Unit {i + 1}")
-            lbl.setStyleSheet(f"font-weight: bold; color: {COLORS.get('accent', '#fff')}; font-size: 13px; border: none; background: transparent;")
-            grid.addWidget(lbl, 0, 0, 1, 4)
 
-            grid.addWidget(QLabel("IMEI 1:"), 1, 0)
+            unit_label = "Tablet" if self._is_tablet else "Unit"
+            lbl = QLabel(f"{unit_label} {i + 1}")
+            lbl.setStyleSheet(f"font-weight: bold; color: {COLORS.get('accent', '#fff')}; font-size: 13px; border: none; background: transparent;")
+            grid.addWidget(lbl, 0, 0, 1, 3)
+
+            # ── Tablet-specific: Has SIM checkbox top-right ──
+            has_sim_check = None
+            if self._is_tablet:
+                has_sim_check = QCheckBox("Has SIM")
+                has_sim_check.setStyleSheet("border: none; background: transparent;")
+                grid.addWidget(has_sim_check, 0, 3)
+
+            # ── Serial Number row (tablets only) ──
+            serial_inp = None
+            row_offset = 1
+            if self._is_tablet:
+                req_marker = " *" if self._is_ipad else ""
+                serial_label = QLabel(f"Serial No{req_marker}:")
+                grid.addWidget(serial_label, row_offset, 0)
+                serial_inp = QLineEdit()
+                serial_inp.setPlaceholderText(
+                    "Required for iPad" if self._is_ipad else "Optional"
+                )
+                grid.addWidget(serial_inp, row_offset, 1, 1, 3)
+                row_offset += 1
+
+            # ── IMEI fields ──
+            imei1_label = QLabel("IMEI 1:")
+            grid.addWidget(imei1_label, row_offset, 0)
             imei1 = QLineEdit()
             imei1.setPlaceholderText("15 digits")
-            grid.addWidget(imei1, 1, 1)
+            grid.addWidget(imei1, row_offset, 1)
 
-            grid.addWidget(QLabel("IMEI 2:"), 1, 2)
+            imei2_label = QLabel("IMEI 2:")
+            grid.addWidget(imei2_label, row_offset, 2)
             imei2 = QLineEdit()
             imei2.setPlaceholderText("Optional")
-            grid.addWidget(imei2, 1, 3)
+            grid.addWidget(imei2, row_offset, 3)
+            row_offset += 1
 
-            grid.addWidget(QLabel("Color:"), 2, 0)
+            grid.addWidget(QLabel("Color:"), row_offset, 0)
             color_inp = QLineEdit()
-            grid.addWidget(color_inp, 2, 1)
+            grid.addWidget(color_inp, row_offset, 1)
 
             variant_lbl = QLabel("Variant:")
-            grid.addWidget(variant_lbl, 2, 2)
+            grid.addWidget(variant_lbl, row_offset, 2)
             variant_inp = QLineEdit()
-            grid.addWidget(variant_inp, 2, 3)
-            # Variants are always visible now for any phone/tablet
-            variant_lbl.setVisible(True)
-            variant_inp.setVisible(True)
+            grid.addWidget(variant_inp, row_offset, 3)
+            row_offset += 1
 
-            grid.addWidget(QLabel("Purch Price:"), 3, 0)
+            grid.addWidget(QLabel("Purch Price:"), row_offset, 0)
             purch_inp = QDoubleSpinBox()
             purch_inp.setMaximum(9999999)
             purch_inp.setSingleStep(50)
-            grid.addWidget(purch_inp, 3, 1)
+            grid.addWidget(purch_inp, row_offset, 1)
 
-            grid.addWidget(QLabel("Sale Price:"), 3, 2)
+            grid.addWidget(QLabel("Sale Price:"), row_offset, 2)
             sale_inp = QDoubleSpinBox()
             sale_inp.setMaximum(9999999)
             sale_inp.setSingleStep(50)
-            grid.addWidget(sale_inp, 3, 3)
+            grid.addWidget(sale_inp, row_offset, 3)
 
+            # ── Tablet IMEI toggle: hide IMEI fields when no SIM ──
+            if self._is_tablet:
+                def make_toggle(check, lbl1, fld1, lbl2, fld2):
+                    def toggle():
+                        on = check.isChecked()
+                        lbl1.setVisible(on)
+                        fld1.setVisible(on)
+                        lbl2.setVisible(on)
+                        fld2.setVisible(on)
+                        if not on:
+                            fld1.clear()
+                            fld2.clear()
+                    return toggle
+                toggle_fn = make_toggle(has_sim_check, imei1_label, imei1, imei2_label, imei2)
+                has_sim_check.toggled.connect(toggle_fn)
+                # Default: hidden
+                imei1_label.setVisible(False)
+                imei1.setVisible(False)
+                imei2_label.setVisible(False)
+                imei2.setVisible(False)
+
+            # Restore prior values
             if i < len(old_values):
                 imei1.setText(old_values[i]['imei1'])
                 imei2.setText(old_values[i]['imei2'])
@@ -322,6 +362,10 @@ class DynamicFormDialog(QDialog):
                 variant_inp.setText(old_values[i]['variant'])
                 purch_inp.setValue(old_values[i]['purch'])
                 sale_inp.setValue(old_values[i]['sale'])
+                if serial_inp:
+                    serial_inp.setText(old_values[i].get('serial', ''))
+                if has_sim_check and old_values[i].get('has_sim'):
+                    has_sim_check.setChecked(True)
             else:
                 color_inp.setText(self.color_input.text() if hasattr(self, 'color_input') else "")
                 variant_inp.setText(self.region_variant_input.text() if hasattr(self, 'region_variant_input') else "")
@@ -335,7 +379,9 @@ class DynamicFormDialog(QDialog):
                 'color': color_inp,
                 'variant': variant_inp,
                 'purch': purch_inp,
-                'sale': sale_inp
+                'sale': sale_inp,
+                'serial': serial_inp,
+                'has_sim': has_sim_check,
             })
 
     def _on_quantity_change(self, value: int):
@@ -365,10 +411,18 @@ class DynamicFormDialog(QDialog):
             else:
                 sub_name = ""
             is_phone = sub_name in ("Used Phones", "Box Pack Phones", "Keypad Phones", "Tablets")
+            self._is_tablet = sub_name == "Tablets"
+            pt_name = self.product_type_combo.currentText()
+            self._is_ipad = self._is_tablet and pt_name == "iPad"
             self.phone_group.setVisible(is_phone)
             if is_phone:
                 self._configure_phone_fields(sub_name)
                 self._build_imei_rows(self.quantity_input.value())
+            # Update phone group title to reflect device type
+            if self._is_tablet:
+                self.phone_group.setTitle("Tablet Details")
+            elif is_phone:
+                self.phone_group.setTitle("Phone Details")
 
     def _configure_phone_fields(self, sub_name: str):
         """Show/hide phone fields and auto-set phone type based on subcategory."""
@@ -377,15 +431,23 @@ class DynamicFormDialog(QDialog):
             self.phone_type_combo.addItem("used")
             self.keypad_type_combo.setVisible(False)
             self._set_shared_row_visible("Keypad Type:", False)
+            self.phone_type_combo.setEnabled(False)
         elif sub_name == "Box Pack Phones":
             self.phone_type_combo.addItem("box_pack")
             self.keypad_type_combo.setVisible(False)
             self._set_shared_row_visible("Keypad Type:", False)
+            self.phone_type_combo.setEnabled(False)
         elif sub_name == "Keypad Phones":
             self.phone_type_combo.addItem("keypad")
             self.keypad_type_combo.setVisible(True)
             self._set_shared_row_visible("Keypad Type:", True)
-        self.phone_type_combo.setEnabled(False)
+            self.phone_type_combo.setEnabled(False)
+        elif sub_name == "Tablets":
+            # Tablets can be used or box_pack — let user choose
+            self.phone_type_combo.addItems(["used", "box_pack"])
+            self.keypad_type_combo.setVisible(False)
+            self._set_shared_row_visible("Keypad Type:", False)
+            self.phone_type_combo.setEnabled(True)
 
     def _set_shared_row_visible(self, label_text: str, visible: bool):
         """Show/hide a form row in the shared phone fields by label text."""
@@ -435,6 +497,12 @@ class DynamicFormDialog(QDialog):
             return combo
         return QLineEdit()
 
+    def _on_phone_type_change_edit(self, new_type: str):
+        """Show/hide keypad type row when phone_type changes during edit."""
+        is_keypad = new_type == "keypad"
+        self.keypad_type_combo.setVisible(is_keypad)
+        self._set_shared_row_visible("Keypad Type:", is_keypad)
+
     # ── Edit population ──
 
     def _populate_edit_data(self):
@@ -467,19 +535,45 @@ class DynamicFormDialog(QDialog):
         if self.phone_details:
             self.phone_group.setVisible(True)
             pd = self.phone_details
-            # For editing, show single IMEI row (each phone is its own product)
+            # Detect if editing a tablet by looking up subcategory of this product type
+            try:
+                all_pts = self.inventory_service.repo.get_all_product_types()
+                pt_map = {pt.id: pt for pt in all_pts}
+                pt = pt_map.get(p.product_type_id)
+                if pt:
+                    all_subs = self.inventory_service.repo.get_all_subcategories()
+                    sub_map = {s.id: s for s in all_subs}
+                    sub = sub_map.get(pt.subcategory_id)
+                    if sub and sub.name == "Tablets":
+                        self._is_tablet = True
+                        self._is_ipad = pt.name == "iPad"
+                        self.phone_group.setTitle("Tablet Details")
+                        self._set_shared_row_visible("Keypad Type:", False)
+            except Exception:
+                pass
+
+            # For editing, show single IMEI row (each phone/tablet is its own product)
             self._build_imei_rows(1)
             first_row = self._imei_rows[0]
-            if isinstance(first_row, dict):
-                first_row['imei1'].setText(pd.imei1)
-                first_row['imei2'].setText(pd.imei2)
-            else:
-                first_row[0].setText(pd.imei1)
-                first_row[1].setText(pd.imei2)
-            # Lock phone type
+            first_row['imei1'].setText(pd.imei1)
+            first_row['imei2'].setText(pd.imei2)
+            if first_row.get('serial'):
+                first_row['serial'].setText(pd.serial_number)
+            if first_row.get('has_sim') and pd.imei1:
+                first_row['has_sim'].setChecked(True)
+            # Phone type: editable
             self.phone_type_combo.clear()
-            self.phone_type_combo.addItem(pd.phone_type)
-            self.phone_type_combo.setEnabled(False)
+            if self._is_tablet:
+                self.phone_type_combo.addItems(["used", "box_pack"])
+            else:
+                self.phone_type_combo.addItems(["used", "box_pack", "keypad"])
+            idx = self.phone_type_combo.findText(pd.phone_type)
+            if idx >= 0:
+                self.phone_type_combo.setCurrentIndex(idx)
+            self.phone_type_combo.setEnabled(True)
+            # Toggle keypad type row when type changes
+            self.phone_type_combo.currentTextChanged.connect(self._on_phone_type_change_edit)
+
             is_keypad = pd.phone_type == "keypad"
             self.keypad_type_combo.setVisible(is_keypad)
             self._set_shared_row_visible("Keypad Type:", is_keypad)
@@ -499,8 +593,8 @@ class DynamicFormDialog(QDialog):
             self.region_variant_input.setVisible(True)
             self._set_shared_row_visible("Region Variant:", True)
 
-            # Lock quantity for phone edits (each phone = 1 unit)
-            self.quantity_input.setEnabled(False)
+            # Quantity is editable in edit mode (user can correct miscounts manually)
+            self.quantity_input.setEnabled(True)
 
     # ── Save ──
 
@@ -540,7 +634,7 @@ class DynamicFormDialog(QDialog):
 
         is_phone = self.phone_group.isVisible()
 
-        # Validate and collect IMEI data for phones
+        # Validate and collect per-unit data for phones/tablets
         imei_list = []
         if is_phone:
             for i, row in enumerate(self._imei_rows):
@@ -550,30 +644,76 @@ class DynamicFormDialog(QDialog):
                 variant_input = row['variant']
                 purch_input = row['purch']
                 sale_input = row['sale']
-                
+                serial_input = row.get('serial')
+                has_sim_check = row.get('has_sim')
+
                 imei1 = imei1_input.text().strip()
                 imei2 = imei2_input.text().strip()
-                unit_label = f"Device {i + 1}" if len(self._imei_rows) > 1 else "IMEI 1"
+                serial = serial_input.text().strip() if serial_input else ""
+                has_sim = has_sim_check.isChecked() if has_sim_check else False
 
-                if not imei1:
-                    QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 1 / Serial Number is required.")
-                    imei1_input.setFocus()
-                    return
-                    
-                # Re-enabled strict 15-digit validation with UI warnings
-                if not imei1.isdigit() or len(imei1) != 15:
-                    QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 1 must be exactly 15 digits long.")
-                    imei1_input.setFocus()
-                    return
-                    
-                if imei2 and (not imei2.isdigit() or len(imei2) != 15):
-                    QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 2 must be exactly 15 digits long.")
-                    imei2_input.setFocus()
-                    return
+                unit_label = (
+                    f"Tablet {i + 1}" if self._is_tablet
+                    else (f"Phone {i + 1}" if len(self._imei_rows) > 1 else "Phone")
+                )
+
+                if self._is_tablet:
+                    # iPad requires serial number
+                    if self._is_ipad and not serial:
+                        QMessageBox.warning(self, "Validation",
+                            f"{unit_label}: Serial Number is required for iPads.")
+                        if serial_input:
+                            serial_input.setFocus()
+                        return
+                    # If has SIM, validate IMEI
+                    if has_sim:
+                        if not imei1:
+                            QMessageBox.warning(self, "Validation",
+                                f"{unit_label}: IMEI 1 is required when 'Has SIM' is checked.")
+                            imei1_input.setFocus()
+                            return
+                        if not imei1.isdigit() or len(imei1) != 15:
+                            QMessageBox.warning(self, "Validation",
+                                f"{unit_label}: IMEI 1 must be exactly 15 digits.")
+                            imei1_input.setFocus()
+                            return
+                        if imei2 and (not imei2.isdigit() or len(imei2) != 15):
+                            QMessageBox.warning(self, "Validation",
+                                f"{unit_label}: IMEI 2 must be exactly 15 digits.")
+                            imei2_input.setFocus()
+                            return
+                    else:
+                        # No SIM: ensure IMEI fields are empty
+                        imei1 = ""
+                        imei2 = ""
+                    # Tablet must have at least one identifier (serial or IMEI)
+                    if not serial and not imei1:
+                        QMessageBox.warning(self, "Validation",
+                            f"{unit_label}: Either Serial Number or IMEI is required.")
+                        if serial_input:
+                            serial_input.setFocus()
+                        return
+                else:
+                    # Phone: IMEI 1 always required, must be 15 digits
+                    if not imei1:
+                        QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 1 is required.")
+                        imei1_input.setFocus()
+                        return
+                    if not imei1.isdigit() or len(imei1) != 15:
+                        QMessageBox.warning(self, "Validation",
+                            f"{unit_label}: IMEI 1 must be exactly 15 digits.")
+                        imei1_input.setFocus()
+                        return
+                    if imei2 and (not imei2.isdigit() or len(imei2) != 15):
+                        QMessageBox.warning(self, "Validation",
+                            f"{unit_label}: IMEI 2 must be exactly 15 digits.")
+                        imei2_input.setFocus()
+                        return
 
                 imei_data = {
                     "imei1": imei1,
                     "imei2": imei2,
+                    "serial": serial,
                     "color": color_input.text().strip(),
                     "variant": variant_input.text().strip(),
                     "purch": purch_input.value(),
@@ -618,12 +758,8 @@ class DynamicFormDialog(QDialog):
                     shared_copy = dict(phone_shared)
                     shared_copy['color'] = imei_list[0]['color']
                     shared_copy['region_variant'] = imei_list[0]['variant']
-                    
-                    # Update product's own individual prices based on the row if needed,
-                    # but wait, product_obj is updated with global purchase_price/sale_price in edit mode above.
-                    # In edit mode, we could just rely on global or update it specifically.
-                    # Since quantity is locked to 1 in edit mode, global == row 1.
-                    
+                    shared_copy['serial_number'] = imei_list[0].get('serial', '')
+
                     self._save_phone_details_bg(
                         product_obj.id, imei_list[0]['imei1'], imei_list[0]['imei2'], shared_copy
                     )
@@ -642,7 +778,7 @@ class DynamicFormDialog(QDialog):
                 return
 
             if is_phone and imei_list:
-                # Phones: create one product per unit, each with qty=1
+                # Phones/tablets: create one product per unit, each with qty=1
                 def do_save():
                     for imei_data in imei_list:
                         product = Product(
@@ -658,11 +794,12 @@ class DynamicFormDialog(QDialog):
                             notes=notes,
                         )
                         created = self.inventory_service.create_product(product)
-                        
+
                         shared_copy = dict(phone_shared)
                         shared_copy['color'] = imei_data['color']
                         shared_copy['region_variant'] = imei_data['variant']
-                        
+                        shared_copy['serial_number'] = imei_data.get('serial', '')
+
                         self._save_phone_details_bg(
                             created.id, imei_data['imei1'], imei_data['imei2'], shared_copy
                         )
@@ -692,7 +829,7 @@ class DynamicFormDialog(QDialog):
         self._save_worker.start()
 
     def _save_phone_details_bg(self, product_id: str, imei1: str, imei2: str, shared: dict):
-        """Save phone details for a single product (called from background thread)."""
+        """Save phone/tablet details for a single product (called from background thread)."""
         details = PhoneDetails(
             product_id=product_id,
             imei1=imei1,
@@ -706,6 +843,7 @@ class DynamicFormDialog(QDialog):
             ram_gb=shared["ram_gb"],
             color=shared["color"],
             region_variant=shared.get("region_variant", ""),
+            serial_number=shared.get("serial_number", ""),
         )
         existing = self.inventory_service.get_phone_details(product_id)
         if existing:

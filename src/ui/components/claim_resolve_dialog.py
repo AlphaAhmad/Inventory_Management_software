@@ -32,6 +32,8 @@ class ClaimResolveDialog(QDialog):
         info_layout.addRow("Brand:", QLabel(self.product.brand or "\u2014"))
         info_layout.addRow("Model:", QLabel(self.product.model or "\u2014"))
         if self.phone_details:
+            if self.phone_details.serial_number:
+                info_layout.addRow("Serial No:", QLabel(self.phone_details.serial_number))
             if self.phone_details.imei1:
                 info_layout.addRow("IMEI 1:", QLabel(self.phone_details.imei1))
             if self.phone_details.claim_reason:

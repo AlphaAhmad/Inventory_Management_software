@@ -66,6 +66,7 @@ class ProductInfoDialog(QDialog):
             p = self.phone_details
             add_row("Type", p.phone_type.replace("_", " ").title())
             if p.condition: add_row("Condition", p.condition.title())
+            if p.serial_number: add_row("Serial No", p.serial_number)
             if p.imei1: add_row("IMEI 1", p.imei1)
             if p.imei2: add_row("IMEI 2", p.imei2)
             if p.color: add_row("Color", p.color)

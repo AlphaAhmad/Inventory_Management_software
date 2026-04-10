@@ -37,3 +37,4 @@ class PhoneDetails:
     ram_gb: int = 0
     color: str = ""
     region_variant: str = ""
+    serial_number: str = ""

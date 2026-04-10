@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QMessageBox, QComboBox,
+    QPushButton, QMessageBox, QComboBox, QFrame,
 )
 from PySide6.QtCore import Qt
 from src.services.inventory_service import InventoryService
@@ -34,6 +34,23 @@ class PhonesPage(QWidget):
             f"font-size: 20px; font-weight: bold; color: {COLORS['accent']};"
         )
         layout.addWidget(title)
+
+        # ── Stat cards ──
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(16)
+        self.card_box_pack = self._create_stat_card(
+            "Box Pack Phones", "0", COLORS["green"], COLORS["green_soft"], "\u2709"
+        )
+        self.card_used = self._create_stat_card(
+            "Used Phones", "0", COLORS["accent"], COLORS["accent_soft"], "\u260E"
+        )
+        self.card_keypad = self._create_stat_card(
+            "Keypad Phones", "0", COLORS["yellow"], COLORS["yellow_soft"], "\u2328"
+        )
+        stats_row.addWidget(self.card_box_pack)
+        stats_row.addWidget(self.card_used)
+        stats_row.addWidget(self.card_keypad)
+        layout.addLayout(stats_row)
 
         filter_row = QHBoxLayout()
         filter_row.setSpacing(12)
@@ -73,11 +90,22 @@ class PhonesPage(QWidget):
         selected = self.filter_combo.currentText()
 
         def fetch():
+            subcategories = self.inventory_service.get_subcategories(self.category_id)
+            sub_by_name = {s.name: s for s in subcategories}
+
+            # Compute stats for all 3 subcategories (in_stock count)
+            stats = {"Used Phones": 0, "Box Pack Phones": 0, "Keypad Phones": 0}
+            for name in stats.keys():
+                sub = sub_by_name.get(name)
+                if sub:
+                    sub_products = self.inventory_service.get_products_by_subcategory(sub.id)
+                    stats[name] = sum(1 for p in sub_products if p.status == "in_stock")
+
+            # Filter for the table
             if selected == "All Subcategories":
                 products = self.inventory_service.get_products_by_category(self.category_id)
             else:
-                subcategories = self.inventory_service.get_subcategories(self.category_id)
-                sub = next((s for s in subcategories if s.name == selected), None)
+                sub = sub_by_name.get(selected)
                 products = self.inventory_service.get_products_by_subcategory(sub.id) if sub else []
 
             # Enrich products with phone details for table display
@@ -92,10 +120,17 @@ class PhonesPage(QWidget):
                         p.attributes["storage"] = f"{pd.storage_gb} GB" if pd.storage_gb else ""
                         p.attributes["color"] = pd.color
                         p.attributes["variant"] = getattr(pd, "region_variant", "")
-            return products
+            return {"products": products, "stats": stats}
 
-        run_async(self, fetch, lambda products: self.table.load_products(products),
+        run_async(self, fetch, self._on_data_loaded,
                   message="Loading phones...")
+
+    def _on_data_loaded(self, data):
+        stats = data["stats"]
+        self.card_box_pack._value_label.setText(str(stats["Box Pack Phones"]))
+        self.card_used._value_label.setText(str(stats["Used Phones"]))
+        self.card_keypad._value_label.setText(str(stats["Keypad Phones"]))
+        self.table.load_products(data["products"])
 
     def _on_add(self):
         try:
@@ -217,3 +252,45 @@ class PhonesPage(QWidget):
             dialog.exec()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open product info:\n{e}")
+
+    def _create_stat_card(self, label: str, value: str, color: str, bg_tint: str, icon: str) -> QFrame:
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame {{ background-color: {COLORS['bg_card']}; "
+            f"border-radius: 12px; border: 1px solid {COLORS['border']}; }}"
+        )
+        card.setFixedHeight(95)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        icon_badge = QLabel(icon)
+        icon_badge.setFixedSize(30, 30)
+        icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_badge.setStyleSheet(
+            f"background-color: {bg_tint}; color: {color}; "
+            f"border-radius: 8px; font-size: 14px; border: none;"
+        )
+        top_row.addWidget(icon_badge)
+
+        label_widget = QLabel(label)
+        label_widget.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 12px; "
+            f"font-weight: 600; border: none; background: transparent;"
+        )
+        top_row.addWidget(label_widget)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+        layout.addStretch()
+
+        value_label = QLabel(value)
+        value_label.setStyleSheet(
+            f"color: {color}; font-size: 24px; font-weight: 800; "
+            f"border: none; background: transparent; letter-spacing: -0.5px;"
+        )
+        layout.addWidget(value_label)
+
+        card._value_label = value_label
+        return card

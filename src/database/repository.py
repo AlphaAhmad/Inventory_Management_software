@@ -246,6 +246,7 @@ class Repository:
             "ram_gb": details.ram_gb,
             "color": details.color,
             "region_variant": details.region_variant,
+            "serial_number": details.serial_number,
         }
         resp = self.client.table("phone_details").insert(data).execute()
         return PhoneDetails(**resp.data[0])
@@ -265,6 +266,7 @@ class Repository:
             "ram_gb": details.ram_gb,
             "color": details.color,
             "region_variant": details.region_variant,
+            "serial_number": details.serial_number,
         }
         resp = (
             self.client.table("phone_details")
