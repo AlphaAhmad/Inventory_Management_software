@@ -477,7 +477,7 @@ class DynamicFormDialog(QDialog):
                     return
                 imei_list.append((imei1, imei2))
 
-        # Collect shared phone details
+        # Collect shared phone detail
         phone_shared = None
         if is_phone:
             phone_shared = {

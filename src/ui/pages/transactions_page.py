@@ -9,6 +9,7 @@ from src.services.inventory_service import InventoryService
 from src.services.transaction_service import TransactionService
 from src.utils.helpers import format_price
 from src.ui.components.loading_overlay import LoadingOverlay, run_async
+from src.ui.components.transaction_details_dialog import TransactionDetailsDialog
 from src.ui.theme import COLORS
 
 
@@ -18,6 +19,7 @@ class TransactionsPage(QWidget):
 
         self.inventory_service = InventoryService()
         self.transaction_service = TransactionService()
+        self._transactions: list = []
 
         self._setup_ui()
 
@@ -54,6 +56,7 @@ class TransactionsPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
+        self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -89,6 +92,7 @@ class TransactionsPage(QWidget):
 
     def _populate_table(self, result):
         transactions, name_map = result
+        self._transactions = transactions
 
         type_colors = {
             "purchase": QColor(COLORS["green"]),
@@ -108,6 +112,7 @@ class TransactionsPage(QWidget):
             date_item = QTableWidgetItem(date_str)
             date_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             date_item.setForeground(row_color)
+            date_item.setData(Qt.ItemDataRole.UserRole, txn.id)
             self.table.setItem(row, 0, date_item)
 
             product_name = name_map.get(txn.product_id, "Unknown")
@@ -146,3 +151,24 @@ class TransactionsPage(QWidget):
             self.table.setItem(row, 6, customer_item)
 
         self.table.setSortingEnabled(True)
+
+    def _on_row_double_clicked(self, row: int, col: int):
+        date_item = self.table.item(row, 0)
+        if not date_item:
+            return
+        txn_id = date_item.data(Qt.ItemDataRole.UserRole)
+        if not txn_id:
+            return
+        txn = next((t for t in self._transactions if t.id == txn_id), None)
+        if not txn:
+            return
+
+        try:
+            product = self.inventory_service.get_product_by_id(txn.product_id)
+            phone_details = None
+            if product:
+                phone_details = self.inventory_service.get_phone_details(product.id)
+            dialog = TransactionDetailsDialog(txn, product, phone_details, parent=self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load transaction details:\n{e}")

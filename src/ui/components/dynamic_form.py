@@ -543,16 +543,42 @@ class DynamicFormDialog(QDialog):
         # Validate and collect IMEI data for phones
         imei_list = []
         if is_phone:
-            for i, (imei1_input, imei2_input) in enumerate(self._imei_rows):
+            for i, row in enumerate(self._imei_rows):
+                imei1_input = row['imei1']
+                imei2_input = row['imei2']
+                color_input = row['color']
+                variant_input = row['variant']
+                purch_input = row['purch']
+                sale_input = row['sale']
+                
                 imei1 = imei1_input.text().strip()
                 imei2 = imei2_input.text().strip()
-                unit_label = f"Phone {i + 1}" if len(self._imei_rows) > 1 else "IMEI 1"
+                unit_label = f"Device {i + 1}" if len(self._imei_rows) > 1 else "IMEI 1"
 
                 if not imei1:
                     QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 1 / Serial Number is required.")
                     imei1_input.setFocus()
                     return
-                # Removed strict 15-digit validation to allow alphanumeric Serials for Tablets/iPads
+                    
+                # Re-enabled strict 15-digit validation with UI warnings
+                if not imei1.isdigit() or len(imei1) != 15:
+                    QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 1 must be exactly 15 digits long.")
+                    imei1_input.setFocus()
+                    return
+                    
+                if imei2 and (not imei2.isdigit() or len(imei2) != 15):
+                    QMessageBox.warning(self, "Validation", f"{unit_label}: IMEI 2 must be exactly 15 digits long.")
+                    imei2_input.setFocus()
+                    return
+
+                imei_data = {
+                    "imei1": imei1,
+                    "imei2": imei2,
+                    "color": color_input.text().strip(),
+                    "variant": variant_input.text().strip(),
+                    "purch": purch_input.value(),
+                    "sale": sale_input.value()
+                }
                 imei_list.append(imei_data)
 
         # Collect shared phone details

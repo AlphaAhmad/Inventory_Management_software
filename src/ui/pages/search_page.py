@@ -7,6 +7,9 @@ from src.services.inventory_service import InventoryService
 from src.ui.components.product_table import ProductTable
 from src.ui.components.dynamic_form import DynamicFormDialog
 from src.ui.components.transaction_dialog import TransactionDialog
+from src.ui.components.return_dialog import ReturnDialog
+from src.ui.components.claim_dialog import ClaimDialog
+from src.ui.components.claim_resolve_dialog import ClaimResolveDialog
 from src.ui.theme import COLORS
 
 
@@ -39,6 +42,9 @@ class SearchPage(QWidget):
         self.table.delete_requested.connect(self._on_delete)
         self.table.buy_requested.connect(self._on_buy)
         self.table.sell_requested.connect(self._on_sell)
+        self.table.return_requested.connect(self._on_return)
+        self.table.claim_requested.connect(self._on_claim)
+        self.table.resolve_claim_requested.connect(self._on_resolve_claim)
         layout.addWidget(self.table, 1)
 
     def do_search(self, query: str):
@@ -137,3 +143,38 @@ class SearchPage(QWidget):
             dialog.exec()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open product info:\n{e}")
+
+    def _on_return(self, product_id: str):
+        try:
+            product = self.inventory_service.get_product_by_id(product_id)
+            if not product:
+                return
+            dialog = ReturnDialog(product, parent=self)
+            if dialog.exec():
+                self.refresh_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to record return:\n{e}")
+
+    def _on_claim(self, product_id: str):
+        try:
+            product = self.inventory_service.get_product_by_id(product_id)
+            if not product:
+                return
+            phone_details = self.inventory_service.get_phone_details(product_id)
+            dialog = ClaimDialog(product, phone_details, parent=self)
+            if dialog.exec():
+                self.refresh_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to submit claim:\n{e}")
+
+    def _on_resolve_claim(self, product_id: str):
+        try:
+            product = self.inventory_service.get_product_by_id(product_id)
+            if not product:
+                return
+            phone_details = self.inventory_service.get_phone_details(product_id)
+            dialog = ClaimResolveDialog(product, phone_details, parent=self)
+            if dialog.exec():
+                self.refresh_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to resolve claim:\n{e}")

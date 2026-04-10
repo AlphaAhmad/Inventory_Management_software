@@ -102,6 +102,8 @@ class TransactionService:
         refund_amount: float,
         customer_info: str = "",
         return_reason: str = "",
+        new_phone_type: str = None,
+        new_condition: str = None,
     ) -> Transaction:
         product = self.repo.get_product_by_id(product_id)
         if not product:
@@ -126,17 +128,27 @@ class TransactionService:
 
         product.quantity += 1
         product.status = "in_stock"
-        
-        # Apply condition updates if not a phone (phones are handled below)
+        # Update cost basis to the refund amount (shop's effective re-acquisition cost)
+        product.purchase_price = refund_amount
+
+        # Apply condition updates
         phone_details = self.repo.get_phone_details(product_id)
-        if not phone_details:
+        if phone_details:
+            if new_phone_type:
+                phone_details.phone_type = new_phone_type
             if new_condition:
+                phone_details.condition = new_condition
+            self.repo.update_phone_details(phone_details)
+        else:
+            if new_condition:
+                if "attributes" not in product.__dict__ or product.attributes is None:
+                    product.attributes = {}
                 product.attributes["condition"] = new_condition
             if new_phone_type == "used":
-                # Maybe append used to title or attributes
-                if product.attributes.get("condition") != new_condition:
-                    product.attributes["condition"] = new_condition
-                    
+                if "attributes" not in product.__dict__ or product.attributes is None:
+                    product.attributes = {}
+                product.attributes["phone_type"] = "used"
+                
         self.repo.update_product(product)
 
         return created
