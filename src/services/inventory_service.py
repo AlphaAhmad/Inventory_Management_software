@@ -31,8 +31,20 @@ class InventoryService:
     def create_subcategory(self, subcategory) -> 'Subcategory':
         return self.repo.create_subcategory(subcategory)
 
+    def delete_subcategory(self, subcategory_id: str) -> int:
+        return self.repo.delete_subcategory(subcategory_id)
+
+    def count_products_in_subcategory(self, subcategory_id: str) -> int:
+        return self.repo.count_products_in_subcategory(subcategory_id)
+
     def create_product_type(self, product_type) -> 'ProductType':
         return self.repo.create_product_type(product_type)
+
+    def delete_product_type(self, product_type_id: str) -> int:
+        return self.repo.delete_product_type(product_type_id)
+
+    def count_products_in_product_type(self, product_type_id: str) -> int:
+        return self.repo.count_products_in_product_type(product_type_id)
 
     def create_attribute_definition(self, attr) -> 'AttributeDefinition':
         return self.repo.create_attribute_definition(attr)
@@ -87,6 +99,9 @@ class InventoryService:
 
     def get_dashboard_stats(self) -> dict:
         return self.repo.get_dashboard_stats()
+
+    def get_profit_for_month(self, year: int, month: int) -> dict:
+        return self.repo.get_profit_for_month(year, month)
 
     def get_total_product_count(self) -> int:
         return self.repo.get_total_product_count()

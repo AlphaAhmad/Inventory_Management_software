@@ -76,8 +76,12 @@ class TransactionService:
 
         return created
 
-    def get_all_transactions(self) -> list[Transaction]:
-        return self.repo.get_all_transactions()
+    def get_all_transactions(
+        self,
+        trans_type: str | None = None,
+        limit: int | None = 500,
+    ) -> list[Transaction]:
+        return self.repo.get_all_transactions(trans_type=trans_type, limit=limit)
 
     def get_recent_transactions(self, limit: int = 10) -> list[Transaction]:
         return self.repo.get_recent_transactions(limit)
@@ -236,3 +240,107 @@ class TransactionService:
 
     def get_last_sale_for_product(self, product_id: str) -> Transaction | None:
         return self.repo.get_last_sale_for_product(product_id)
+
+    # ── Revert ───────────────────────────────────────
+
+    def revert_transaction(self, transaction_id: str) -> dict:
+        """Undo a transaction as if it never happened.
+        Only the MOST RECENT transaction for a product can be reverted so
+        we don't break the state chain. Returns a dict describing what was
+        undone (for the confirmation message)."""
+        txn = self.repo.get_transaction_by_id(transaction_id)
+        if not txn:
+            raise ValueError("Transaction not found.")
+
+        product = self.repo.get_product_by_id(txn.product_id)
+        if not product:
+            raise ValueError(
+                "The product this transaction belongs to no longer exists "
+                "in inventory. The transaction cannot be reverted."
+            )
+
+        # Guard: only the latest transaction for this product may be reverted.
+        latest = self.repo.get_latest_transaction_for_product(txn.product_id)
+        if latest and latest.id != txn.id:
+            raise ValueError(
+                "Only the most recent transaction for a product can be reverted. "
+                "Revert newer transactions on this product first."
+            )
+
+        phone_details = self.repo.get_phone_details(txn.product_id)
+        summary = {"type": txn.type, "product_id": txn.product_id}
+
+        if txn.type == "sale":
+            # Undo: put stock back, revert sold status if fully sold
+            product.quantity += txn.quantity
+            if product.status == "sold":
+                product.status = "in_stock"
+            self.repo.update_product(product)
+
+        elif txn.type == "purchase":
+            # Undo: take stock back out
+            new_qty = product.quantity - txn.quantity
+            if new_qty < 0:
+                raise ValueError(
+                    f"Cannot revert purchase: current stock ({product.quantity}) "
+                    f"is less than the purchased quantity ({txn.quantity})."
+                )
+            product.quantity = new_qty
+            if product.quantity == 0 and product.status == "in_stock":
+                product.status = "sold"
+            self.repo.update_product(product)
+
+        elif txn.type == "return":
+            # Undo: take the unit back out, restore sold status
+            if product.quantity < 1:
+                raise ValueError("Cannot revert return: product has no stock to remove.")
+            product.quantity -= 1
+            if product.quantity == 0:
+                product.status = "sold"
+            # Best-effort: reset purchase_price to the value prior to the return.
+            # On return we had set purchase_price = refund_amount; there's no
+            # historical record of the previous value, so we leave it alone and
+            # surface a note in the summary.
+            summary["purchase_price_note"] = (
+                "Note: Product's purchase_price was overwritten when the return "
+                "was recorded. The revert cannot restore the previous cost basis. "
+                "Edit the product manually if you need to correct it."
+            )
+            self.repo.update_product(product)
+
+        elif txn.type == "claim":
+            # Undo: back to sold, clear claim fields
+            product.status = "sold"
+            self.repo.update_product(product)
+            if phone_details and phone_details.is_claimed:
+                phone_details.is_claimed = False
+                phone_details.claim_reason = ""
+                self.repo.update_phone_details(phone_details)
+
+        elif txn.type == "claim_resolved":
+            # Undo: back to claimed state. Infer accepted/rejected from the
+            # notes we wrote ("Claim accepted." / "Claim rejected.").
+            was_accepted = txn.notes.lower().startswith("claim accepted")
+            if was_accepted:
+                # We had set qty=1 / status=in_stock; undo that.
+                if product.quantity > 0:
+                    product.quantity -= 1
+            # Status goes back to claimed regardless of previous outcome
+            product.status = "claimed"
+            self.repo.update_product(product)
+            # Restore the claim flag; recover the original reason from the
+            # linked claim transaction if available.
+            if phone_details is not None:
+                phone_details.is_claimed = True
+                if txn.related_transaction_id:
+                    claim_txn = self.repo.get_transaction_by_id(txn.related_transaction_id)
+                    if claim_txn and claim_txn.notes:
+                        phone_details.claim_reason = claim_txn.notes
+                self.repo.update_phone_details(phone_details)
+        else:
+            raise ValueError(f"Unknown transaction type: {txn.type}")
+
+        # Remove the transaction record itself
+        self.repo.delete_transaction(txn.id)
+        summary["deleted"] = True
+        return summary

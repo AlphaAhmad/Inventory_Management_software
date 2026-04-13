@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView, QFrame,
+    QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QComboBox,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+from datetime import date
 from src.services.inventory_service import InventoryService
 from src.services.transaction_service import TransactionService
 from src.utils.helpers import format_price
@@ -78,9 +79,11 @@ class DashboardPage(QWidget):
             "Today's Purchases", "Rs. 0", "0 transactions",
             COLORS["peach"], "#ffab7622", "\u2196"
         )
+        self.card_monthly_profit = self._create_profit_card()
 
         cards_row2.addWidget(self.card_today_sales)
         cards_row2.addWidget(self.card_today_purchases)
+        cards_row2.addWidget(self.card_monthly_profit)
 
         main_layout.addLayout(cards_row2)
         main_layout.addSpacing(28)
@@ -246,6 +249,123 @@ class DashboardPage(QWidget):
         card._sub_label = sub_label
         return card
 
+    def _create_profit_card(self) -> QFrame:
+        """Profit card with a month dropdown in the header."""
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame {{ background-color: {COLORS['bg_card']}; "
+            f"border-radius: 12px; border: 1px solid {COLORS['border']}; }}"
+        )
+        card.setFixedHeight(100)
+
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(16)
+
+        # Left: icon badge
+        icon_badge = QLabel("\u2605")
+        icon_badge.setFixedSize(48, 48)
+        icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_badge.setStyleSheet(
+            f"background-color: {COLORS['accent_soft']}; color: {COLORS['accent']}; "
+            f"border-radius: 12px; font-size: 22px; border: none;"
+        )
+        layout.addWidget(icon_badge)
+
+        # Middle: value
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+
+        label_widget = QLabel("Monthly Profit")
+        label_widget.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 12px; "
+            f"font-weight: 600; border: none; background: transparent;"
+        )
+        text_layout.addWidget(label_widget)
+
+        value_label = QLabel("Rs. 0")
+        value_label.setStyleSheet(
+            f"color: {COLORS['accent']}; font-size: 22px; font-weight: 800; "
+            f"border: none; background: transparent; letter-spacing: -0.5px;"
+        )
+        text_layout.addWidget(value_label)
+
+        sub_label = QLabel("This month")
+        sub_label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; "
+            f"border: none; background: transparent;"
+        )
+        text_layout.addWidget(sub_label)
+
+        layout.addLayout(text_layout)
+        layout.addStretch()
+
+        # Right: month dropdown
+        self.month_combo = QComboBox()
+        self.month_combo.setFixedWidth(140)
+        self.month_combo.setStyleSheet(
+            f"QComboBox {{ font-size: 12px; padding: 4px 8px; "
+            f"border-radius: 6px; min-height: 28px; }}"
+        )
+        today = date.today()
+        for i in range(5):
+            # Go back i months
+            y = today.year
+            m = today.month - i
+            while m <= 0:
+                m += 12
+                y -= 1
+            label = date(y, m, 1).strftime("%B %Y")
+            self.month_combo.addItem(label, (y, m))
+        self.month_combo.currentIndexChanged.connect(self._on_profit_month_changed)
+        layout.addWidget(self.month_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        card._value_label = value_label
+        card._sub_label = sub_label
+        return card
+
+    def _on_profit_month_changed(self, index: int):
+        """Fetch profit for the selected month in the background."""
+        data = self.month_combo.currentData()
+        if not data:
+            return
+        year, month = data
+
+        from src.ui.components.loading_overlay import run_async
+
+        def fetch_month():
+            return self.inventory_service.get_profit_for_month(year, month)
+
+        def on_result(result):
+            self._update_profit_card(result)
+
+        run_async(self, fetch_month, on_result, message="Loading profit...")
+
+    def _update_profit_card(self, profit_data: dict):
+        profit = profit_data.get("profit", 0) or 0
+        revenue = profit_data.get("revenue", 0) or 0
+        cogs = profit_data.get("cogs", 0) or 0
+        returns = profit_data.get("returns", 0) or 0
+        month_label = profit_data.get("month_label", "")
+
+        profit_color = COLORS['green'] if profit >= 0 else COLORS['red']
+        self.card_monthly_profit._value_label.setText(format_price(profit))
+        self.card_monthly_profit._value_label.setStyleSheet(
+            f"color: {profit_color}; font-size: 22px; font-weight: 800; "
+            f"border: none; background: transparent; letter-spacing: -0.5px;"
+        )
+        self.card_monthly_profit._sub_label.setText(
+            f"Rev {format_price(revenue)}"
+        )
+        self.card_monthly_profit.setToolTip(
+            f"Profit Breakdown ({month_label})\n"
+            f"Revenue:  {format_price(revenue)}\n"
+            f"COGS:    -{format_price(cogs)}\n"
+            f"Returns: -{format_price(returns)}\n"
+            f"{'─' * 24}\n"
+            f"Profit:   {format_price(profit)}"
+        )
+
     # ── Data ──
 
     def refresh_data(self):
@@ -284,6 +404,19 @@ class DashboardPage(QWidget):
         self.card_today_purchases._sub_label.setText(
             f"{stats.get('today_purchases_count', 0)} transaction(s)"
         )
+
+        # Monthly profit — reuse the shared updater method
+        self._update_profit_card({
+            "profit": stats.get("monthly_profit", 0),
+            "revenue": stats.get("monthly_revenue", 0),
+            "cogs": stats.get("monthly_cogs", 0),
+            "returns": stats.get("monthly_returns", 0),
+            "month_label": stats.get("month_label", "This month"),
+        })
+        # Reset dropdown to current month (index 0) without re-fetching
+        self.month_combo.blockSignals(True)
+        self.month_combo.setCurrentIndex(0)
+        self.month_combo.blockSignals(False)
 
         # Update transactions table
         if not recent:

@@ -173,3 +173,13 @@ class ProductTable(QTableWidget):
         if 0 <= row < len(self._products):
             return self._products[row]
         return None
+
+    def get_cached_product(self, product_id: str) -> Product | None:
+        """Return the already-loaded Product with this id, if present.
+
+        Used by action handlers (Edit / Sell / Buy / etc.) to avoid a fresh
+        network round-trip when the product is already in the table."""
+        for p in self._products:
+            if p.id == product_id:
+                return p
+        return None

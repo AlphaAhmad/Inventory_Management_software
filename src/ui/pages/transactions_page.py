@@ -75,15 +75,16 @@ class TransactionsPage(QWidget):
         selected_filter = self.filter_combo.currentText()
 
         def fetch():
-            transactions = self.transaction_service.get_all_transactions()
             filter_map = {
                 "Purchase": "purchase", "Sale": "sale", "Return": "return",
                 "Claim": "claim", "Claim Resolved": "claim_resolved",
             }
-            if selected_filter in filter_map:
-                target = filter_map[selected_filter]
-                transactions = [t for t in transactions if t.type == target]
-            transactions.sort(key=lambda t: t.created_at, reverse=True)
+            target = filter_map.get(selected_filter)  # None for "All"
+            # Server-side filter + default limit of 500 most recent.
+            # No need to re-sort — the DB returns them sorted by created_at DESC.
+            transactions = self.transaction_service.get_all_transactions(
+                trans_type=target, limit=500
+            )
             name_map = self.transaction_service.get_product_name_map()
             return (transactions, name_map)
 
@@ -169,6 +170,7 @@ class TransactionsPage(QWidget):
             if product:
                 phone_details = self.inventory_service.get_phone_details(product.id)
             dialog = TransactionDetailsDialog(txn, product, phone_details, parent=self)
+            dialog.reverted.connect(self.refresh_data)
             dialog.exec()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load transaction details:\n{e}")

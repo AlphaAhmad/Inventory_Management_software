@@ -116,7 +116,7 @@ class TabletsPage(QWidget):
 
     def _on_edit(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -147,7 +147,7 @@ class TabletsPage(QWidget):
 
     def _on_buy(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -160,7 +160,7 @@ class TabletsPage(QWidget):
 
     def _on_sell(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -173,7 +173,7 @@ class TabletsPage(QWidget):
 
     def _on_return(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -185,7 +185,7 @@ class TabletsPage(QWidget):
 
     def _on_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -197,7 +197,7 @@ class TabletsPage(QWidget):
 
     def _on_resolve_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -209,7 +209,7 @@ class TabletsPage(QWidget):
 
     def _on_view(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product: return
             from src.ui.components.product_info_dialog import ProductInfoDialog
             dialog = ProductInfoDialog(product, parent=self)

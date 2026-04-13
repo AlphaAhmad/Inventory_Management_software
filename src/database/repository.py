@@ -13,6 +13,8 @@ class Repository:
         self._categories: list[Category] | None = None
         self._subcategories: list[Subcategory] | None = None
         self._product_types: list[ProductType] | None = None
+        # Flat pt_id -> (subcategory, category) resolver, built lazily on demand
+        self._pt_resolver: dict[str, tuple[Subcategory, Category]] | None = None
         # Product name map cache with TTL
         self._product_name_map: dict[str, str] | None = None
         self._product_name_map_time: float = 0
@@ -23,7 +25,29 @@ class Repository:
         self._categories = None
         self._subcategories = None
         self._product_types = None
+        self._pt_resolver = None
         self._product_name_map = None
+
+    def get_product_type_resolver(self) -> dict:
+        """Return a dict: product_type_id -> (Subcategory, Category).
+
+        Built once from the cached hierarchy and reused across the app so
+        handlers like SearchPage._on_edit don't rebuild 3 maps on every click."""
+        if self._pt_resolver is None:
+            self._ensure_hierarchy()
+            sub_by_id = {s.id: s for s in self._subcategories}
+            cat_by_id = {c.id: c for c in self._categories}
+            resolver: dict[str, tuple[Subcategory, Category]] = {}
+            for pt in self._product_types:
+                sub = sub_by_id.get(pt.subcategory_id)
+                if sub is None:
+                    continue
+                cat = cat_by_id.get(sub.category_id)
+                if cat is None:
+                    continue
+                resolver[pt.id] = (sub, cat)
+            self._pt_resolver = resolver
+        return self._pt_resolver
 
     def _ensure_hierarchy(self):
         if self._categories is None:
@@ -72,6 +96,49 @@ class Repository:
             self._subcategories.append(created)
         return created
 
+    def delete_subcategory(self, subcategory_id: str) -> int:
+        """Delete a subcategory along with its product types, attribute
+        definitions, and all products (+ cascading phone_details / transactions).
+        Returns the number of products deleted."""
+        # Collect product types under this subcategory
+        pt_ids = [
+            pt.id for pt in self.get_product_types(subcategory_id)
+        ]
+        product_count = 0
+        if pt_ids:
+            # Count products first
+            prod_resp = (
+                self.client.table("products")
+                .select("id", count="exact")
+                .in_("product_type_id", pt_ids)
+                .execute()
+            )
+            product_count = prod_resp.count or 0
+            # Products cascade delete phone_details and transactions (FK ON DELETE CASCADE)
+            self.client.table("products").delete().in_("product_type_id", pt_ids).execute()
+            # Delete attribute definitions for these product types
+            self.client.table("attribute_definitions").delete().in_("product_type_id", pt_ids).execute()
+            # Delete product types
+            self.client.table("product_types").delete().in_("id", pt_ids).execute()
+        # Delete the subcategory itself
+        self.client.table("subcategories").delete().eq("id", subcategory_id).execute()
+        self.invalidate_caches()
+        self._product_name_map = None
+        return product_count
+
+    def count_products_in_subcategory(self, subcategory_id: str) -> int:
+        """Return how many products exist in a subcategory (used for confirmation)."""
+        pt_ids = [pt.id for pt in self.get_product_types(subcategory_id)]
+        if not pt_ids:
+            return 0
+        resp = (
+            self.client.table("products")
+            .select("id", count="exact")
+            .in_("product_type_id", pt_ids)
+            .execute()
+        )
+        return resp.count or 0
+
     # ── Product Types ───────────────────────────────────────
 
     def get_product_types(self, subcategory_id: str) -> list[ProductType]:
@@ -97,6 +164,37 @@ class Repository:
         if self._product_types is not None:
             self._product_types.append(created)
         return created
+
+    def delete_product_type(self, product_type_id: str) -> int:
+        """Delete a product type + its attribute definitions + all products under it.
+        Returns the number of products deleted."""
+        # Count products first
+        prod_resp = (
+            self.client.table("products")
+            .select("id", count="exact")
+            .eq("product_type_id", product_type_id)
+            .execute()
+        )
+        product_count = prod_resp.count or 0
+        # Products cascade-delete phone_details + transactions
+        if product_count > 0:
+            self.client.table("products").delete().eq("product_type_id", product_type_id).execute()
+        # Delete attribute definitions
+        self.client.table("attribute_definitions").delete().eq("product_type_id", product_type_id).execute()
+        # Delete the product type itself
+        self.client.table("product_types").delete().eq("id", product_type_id).execute()
+        self.invalidate_caches()
+        self._product_name_map = None
+        return product_count
+
+    def count_products_in_product_type(self, product_type_id: str) -> int:
+        resp = (
+            self.client.table("products")
+            .select("id", count="exact")
+            .eq("product_type_id", product_type_id)
+            .execute()
+        )
+        return resp.count or 0
 
     # ── Attribute Definitions ───────────────────────────────
 
@@ -303,13 +401,21 @@ class Repository:
         resp = query.order("created_at", desc=True).execute()
         return [Transaction(**row) for row in resp.data]
 
-    def get_all_transactions(self) -> list[Transaction]:
-        resp = (
-            self.client.table("transactions")
-            .select("*")
-            .order("created_at", desc=True)
-            .execute()
-        )
+    def get_all_transactions(
+        self,
+        trans_type: str | None = None,
+        limit: int | None = 500,
+    ) -> list[Transaction]:
+        """Fetch transactions. Defaults to the 500 most recent to keep the
+        transactions page fast. Pass ``limit=None`` for no limit.
+        ``trans_type`` filters server-side (sale, purchase, return, claim, claim_resolved)."""
+        query = self.client.table("transactions").select("*")
+        if trans_type:
+            query = query.eq("type", trans_type)
+        query = query.order("created_at", desc=True)
+        if limit is not None:
+            query = query.limit(limit)
+        resp = query.execute()
         return [Transaction(**row) for row in resp.data]
 
     def get_recent_transactions(self, limit: int = 10) -> list[Transaction]:
@@ -350,6 +456,24 @@ class Repository:
         )
         return Transaction(**resp.data[0]) if resp.data else None
 
+    def get_transaction_by_id(self, transaction_id: str) -> Transaction | None:
+        resp = self.client.table("transactions").select("*").eq("id", transaction_id).execute()
+        return Transaction(**resp.data[0]) if resp.data else None
+
+    def get_latest_transaction_for_product(self, product_id: str) -> Transaction | None:
+        resp = (
+            self.client.table("transactions")
+            .select("*")
+            .eq("product_id", product_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return Transaction(**resp.data[0]) if resp.data else None
+
+    def delete_transaction(self, transaction_id: str) -> None:
+        self.client.table("transactions").delete().eq("id", transaction_id).execute()
+
     def get_active_claim_for_product(self, product_id: str) -> Transaction | None:
         resp = (
             self.client.table("transactions")
@@ -364,22 +488,52 @@ class Repository:
 
     # ── Search ──────────────────────────────────────────────
 
-    def search_products(self, query: str) -> list[Product]:
-        resp = (
+    def search_products(
+        self,
+        query: str,
+        category_id: str | None = None,
+        subcategory_id: str | None = None,
+    ) -> list[Product]:
+        # Build the set of product_type_ids that this search is allowed to return
+        allowed_pt_ids: set[str] | None = None
+        if subcategory_id:
+            self._ensure_hierarchy()
+            allowed_pt_ids = {
+                pt.id for pt in self._product_types
+                if pt.subcategory_id == subcategory_id
+            }
+            if not allowed_pt_ids:
+                return []
+        elif category_id:
+            self._ensure_hierarchy()
+            sub_ids = {
+                s.id for s in self._subcategories if s.category_id == category_id
+            }
+            allowed_pt_ids = {
+                pt.id for pt in self._product_types if pt.subcategory_id in sub_ids
+            }
+            if not allowed_pt_ids:
+                return []
+
+        # Text search on products table
+        text_query = (
             self.client.table("products")
             .select("*")
             .or_(f"name.ilike.%{query}%,brand.ilike.%{query}%,model.ilike.%{query}%,notes.ilike.%{query}%")
-            .order("created_at", desc=True)
-            .execute()
         )
+        if allowed_pt_ids is not None:
+            text_query = text_query.in_("product_type_id", list(allowed_pt_ids))
+        resp = text_query.order("created_at", desc=True).execute()
         products = [Product(**row) for row in resp.data]
         found_ids = {p.id for p in products}
 
-        # Also search by IMEI in phone_details
+        # Also search by IMEI / serial in phone_details
         imei_resp = (
             self.client.table("phone_details")
             .select("product_id")
-            .or_(f"imei1.ilike.%{query}%,imei2.ilike.%{query}%")
+            .or_(
+                f"imei1.ilike.%{query}%,imei2.ilike.%{query}%,serial_number.ilike.%{query}%"
+            )
             .execute()
         )
         imei_product_ids = [
@@ -387,12 +541,14 @@ class Repository:
             if row["product_id"] not in found_ids
         ]
         if imei_product_ids:
-            extra_resp = (
+            extra_query = (
                 self.client.table("products")
                 .select("*")
                 .in_("id", imei_product_ids)
-                .execute()
             )
+            if allowed_pt_ids is not None:
+                extra_query = extra_query.in_("product_type_id", list(allowed_pt_ids))
+            extra_resp = extra_query.execute()
             products.extend(Product(**row) for row in extra_resp.data)
 
         return products
@@ -400,35 +556,104 @@ class Repository:
     # ── Dashboard Stats ─────────────────────────────────────
 
     def get_dashboard_stats(self) -> dict:
-        """Fetch all dashboard stats (products + today's transactions)."""
-        from datetime import date, timezone
+        """Fetch all dashboard stats (products + today's + monthly profit)."""
+        from datetime import date
 
-        # Products stats
-        resp = self.client.table("products").select("id, sale_price, quantity, status").execute()
+        # Products stats — also use purchase_price to build cost basis lookup
+        resp = self.client.table("products").select(
+            "id, purchase_price, sale_price, quantity, status"
+        ).execute()
         rows = resp.data
         total_count = len(rows)
-        total_value = sum(r["sale_price"] * r["quantity"] for r in rows)
-        low_stock = sum(1 for r in rows if 0 < r["quantity"] <= 3 and r["status"] == "in_stock")
+        total_value = sum((r["sale_price"] or 0) * (r["quantity"] or 0) for r in rows)
+        low_stock = sum(
+            1 for r in rows
+            if 0 < (r["quantity"] or 0) <= 3 and r["status"] == "in_stock"
+        )
+        cost_map = {r["id"]: (r["purchase_price"] or 0) for r in rows}
 
-        # Today's transactions
-        today = date.today().isoformat()
-        txn_resp = (
+        # Monthly transactions (covers today + the rest of the month in one query)
+        today_obj = date.today()
+        month_start = today_obj.replace(day=1).isoformat()
+        today = today_obj.isoformat()
+        month_txn_resp = (
             self.client.table("transactions")
-            .select("type, total_price")
-            .gte("created_at", today)
+            .select("type, total_price, quantity, product_id, created_at")
+            .gte("created_at", month_start)
             .execute()
         )
-        today_sales = [t for t in txn_resp.data if t["type"] == "sale"]
-        today_purchases = [t for t in txn_resp.data if t["type"] == "purchase"]
+        month_txns = month_txn_resp.data
+
+        # Today's stats — filter from monthly result
+        today_sales = [t for t in month_txns if t["type"] == "sale" and (t["created_at"] or "").startswith(today)]
+        today_purchases = [t for t in month_txns if t["type"] == "purchase" and (t["created_at"] or "").startswith(today)]
+
+        # Monthly profit = Revenue - COGS - Returns
+        monthly_revenue = 0.0
+        monthly_cogs = 0.0
+        monthly_returns = 0.0
+        for t in month_txns:
+            if t["type"] == "sale":
+                monthly_revenue += t["total_price"] or 0
+                monthly_cogs += cost_map.get(t["product_id"], 0) * (t["quantity"] or 0)
+            elif t["type"] == "return":
+                monthly_returns += t["total_price"] or 0
+        monthly_profit = monthly_revenue - monthly_cogs - monthly_returns
 
         return {
             "total_count": total_count,
             "total_value": total_value,
             "low_stock_count": low_stock,
             "today_sales_count": len(today_sales),
-            "today_sales_amount": sum(t["total_price"] for t in today_sales),
+            "today_sales_amount": sum(t["total_price"] or 0 for t in today_sales),
             "today_purchases_count": len(today_purchases),
-            "today_purchases_amount": sum(t["total_price"] for t in today_purchases),
+            "today_purchases_amount": sum(t["total_price"] or 0 for t in today_purchases),
+            "monthly_revenue": monthly_revenue,
+            "monthly_cogs": monthly_cogs,
+            "monthly_returns": monthly_returns,
+            "monthly_profit": monthly_profit,
+            "month_label": today_obj.strftime("%B %Y"),
+        }
+
+    def get_profit_for_month(self, year: int, month: int) -> dict:
+        """Compute profit stats for a specific calendar month."""
+        from datetime import date
+        month_start = date(year, month, 1).isoformat()
+        # Next month start
+        if month == 12:
+            next_start = date(year + 1, 1, 1).isoformat()
+        else:
+            next_start = date(year, month + 1, 1).isoformat()
+
+        # Products cost map (current cost basis)
+        prod_resp = self.client.table("products").select("id, purchase_price").execute()
+        cost_map = {r["id"]: (r["purchase_price"] or 0) for r in prod_resp.data}
+
+        # Transactions in that month
+        txn_resp = (
+            self.client.table("transactions")
+            .select("type, total_price, quantity, product_id")
+            .gte("created_at", month_start)
+            .lt("created_at", next_start)
+            .execute()
+        )
+
+        revenue = 0.0
+        cogs = 0.0
+        returns = 0.0
+        for t in txn_resp.data:
+            if t["type"] == "sale":
+                revenue += t["total_price"] or 0
+                cogs += cost_map.get(t["product_id"], 0) * (t["quantity"] or 0)
+            elif t["type"] == "return":
+                returns += t["total_price"] or 0
+
+        return {
+            "revenue": revenue,
+            "cogs": cogs,
+            "returns": returns,
+            "profit": revenue - cogs - returns,
+            "month_label": date(year, month, 1).strftime("%B %Y"),
         }
 
     def get_total_product_count(self) -> int:

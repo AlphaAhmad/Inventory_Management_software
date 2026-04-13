@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame, QMessageBox, QInputDialog,
     QComboBox, QDialog, QDialogButtonBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from src.ui.theme import get_stylesheet, COLORS, NAV_ICONS
 from src.services.inventory_service import InventoryService
 
@@ -86,7 +86,10 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(body, 1)
 
-        self._load_brands_and_build()
+        # Defer the initial load until AFTER the window has been shown so the
+        # hierarchy fetch doesn't block first paint. The user sees an empty
+        # sidebar for a few hundred ms while the cache warms, then it fills in.
+        QTimer.singleShot(0, self._load_brands_and_build)
 
     def _load_brands_and_build(self):
         try:
@@ -268,12 +271,39 @@ class MainWindow(QMainWindow):
 
     def _on_search(self):
         query = self.search_bar.text().strip()
-        if query:
-            for btn in self._nav_buttons:
-                btn.setChecked(False)
-            search_idx = self.stack.indexOf(self.search_page)
-            self.stack.setCurrentIndex(search_idx)
-            self.search_page.do_search(query)
+        if not query:
+            return
+
+        # Detect the current page's category context BEFORE switching to search page.
+        # Search page itself has no context (already global), so don't reuse its scope.
+        category_id = None
+        subcategory_id = None
+        scope_label = ""
+        current_idx = self._current_nav_index
+        current_page = self._pages.get(current_idx) if current_idx is not None else None
+        if current_page is not None and current_page is not self.search_page:
+            # Brand pages have a subcategory_id (specific brand), prefer that over category_id
+            sub_id = getattr(current_page, "subcategory_id", None)
+            cat_id = getattr(current_page, "category_id", None)
+            if sub_id:
+                subcategory_id = sub_id
+                # Try to get a friendly label from brand_name or page title
+                scope_label = getattr(current_page, "brand_name", None) or ""
+            elif cat_id:
+                category_id = cat_id
+                category_obj = getattr(current_page, "category", None)
+                scope_label = getattr(category_obj, "name", "") if category_obj else ""
+
+        for btn in self._nav_buttons:
+            btn.setChecked(False)
+        search_idx = self.stack.indexOf(self.search_page)
+        self.stack.setCurrentIndex(search_idx)
+        self.search_page.do_search(
+            query,
+            category_id=category_id,
+            subcategory_id=subcategory_id,
+            scope_label=scope_label,
+        )
 
     # ── Brand Management ─────────────────────────────────────
 

@@ -90,25 +90,40 @@ class PhonesPage(QWidget):
         selected = self.filter_combo.currentText()
 
         def fetch():
+            # Cached hierarchy lookups — no DB cost after first call
             subcategories = self.inventory_service.get_subcategories(self.category_id)
             sub_by_name = {s.name: s for s in subcategories}
+            sub_id_to_name = {s.id: s.name for s in subcategories}
+            pt_list = self.inventory_service.repo.get_all_product_types()
+            pt_to_sub = {pt.id: pt.subcategory_id for pt in pt_list}
 
-            # Compute stats for all 3 subcategories (in_stock count)
+            # ONE query to fetch every phone in the category.
+            # Stats and filter view are both derived from this single result —
+            # saves 3 extra queries per page refresh.
+            all_products = self.inventory_service.get_products_by_category(self.category_id)
+
+            # In-memory stats grouping
             stats = {"Used Phones": 0, "Box Pack Phones": 0, "Keypad Phones": 0}
-            for name in stats.keys():
-                sub = sub_by_name.get(name)
-                if sub:
-                    sub_products = self.inventory_service.get_products_by_subcategory(sub.id)
-                    stats[name] = sum(1 for p in sub_products if p.status == "in_stock")
+            for p in all_products:
+                if p.status != "in_stock":
+                    continue
+                sub_id = pt_to_sub.get(p.product_type_id)
+                sub_name = sub_id_to_name.get(sub_id) if sub_id else None
+                if sub_name in stats:
+                    stats[sub_name] += 1
 
-            # Filter for the table
+            # In-memory filter for the table
             if selected == "All Subcategories":
-                products = self.inventory_service.get_products_by_category(self.category_id)
+                products = all_products
             else:
                 sub = sub_by_name.get(selected)
-                products = self.inventory_service.get_products_by_subcategory(sub.id) if sub else []
+                sub_id = sub.id if sub else None
+                products = [
+                    p for p in all_products
+                    if pt_to_sub.get(p.product_type_id) == sub_id
+                ] if sub_id else []
 
-            # Enrich products with phone details for table display
+            # Enrich with phone details — still one batch query, unavoidable
             if products:
                 product_ids = [p.id for p in products]
                 details_map = self.inventory_service.get_phone_details_batch(product_ids)
@@ -146,7 +161,7 @@ class PhonesPage(QWidget):
 
     def _on_edit(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -180,7 +195,7 @@ class PhonesPage(QWidget):
 
     def _on_buy(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -193,7 +208,7 @@ class PhonesPage(QWidget):
 
     def _on_sell(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -206,7 +221,7 @@ class PhonesPage(QWidget):
 
     def _on_return(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -218,7 +233,7 @@ class PhonesPage(QWidget):
 
     def _on_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -231,7 +246,7 @@ class PhonesPage(QWidget):
 
     def _on_resolve_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -244,7 +259,7 @@ class PhonesPage(QWidget):
 
     def _on_view(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product: return
             phone_details = self.inventory_service.get_phone_details(product_id)
             from src.ui.components.product_info_dialog import ProductInfoDialog

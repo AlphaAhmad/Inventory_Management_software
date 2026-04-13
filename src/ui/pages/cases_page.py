@@ -51,6 +51,11 @@ class CasesPage(QWidget):
         add_sub_btn.clicked.connect(self._on_add_subcategory)
         filter_row.addWidget(add_sub_btn)
 
+        remove_sub_btn = QPushButton("Remove Subcategory")
+        remove_sub_btn.setObjectName("dangerBtn")
+        remove_sub_btn.clicked.connect(self._on_remove_subcategory)
+        filter_row.addWidget(remove_sub_btn)
+
         add_btn = QPushButton("Add New Product")
         add_btn.setObjectName("primaryBtn")
         add_btn.clicked.connect(self._on_add)
@@ -145,7 +150,7 @@ class CasesPage(QWidget):
 
     def _on_edit(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -176,7 +181,7 @@ class CasesPage(QWidget):
 
     def _on_buy(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -189,7 +194,7 @@ class CasesPage(QWidget):
 
     def _on_sell(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -202,7 +207,7 @@ class CasesPage(QWidget):
 
     def _on_return(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -214,7 +219,7 @@ class CasesPage(QWidget):
 
     def _on_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -226,7 +231,7 @@ class CasesPage(QWidget):
 
     def _on_resolve_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 QMessageBox.warning(self, "Not Found", "Product not found.")
                 return
@@ -238,7 +243,7 @@ class CasesPage(QWidget):
 
     def _on_view(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product: return
             from src.ui.components.product_info_dialog import ProductInfoDialog
             dialog = ProductInfoDialog(product, parent=self)

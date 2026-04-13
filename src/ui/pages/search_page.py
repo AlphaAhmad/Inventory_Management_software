@@ -19,6 +19,9 @@ class SearchPage(QWidget):
         self.search_service = SearchService()
         self.inventory_service = InventoryService()
         self._last_query = ""
+        self._last_category_id: str | None = None
+        self._last_subcategory_id: str | None = None
+        self._last_scope_label: str = ""
         self._setup_ui()
 
     def _setup_ui(self):
@@ -47,12 +50,28 @@ class SearchPage(QWidget):
         self.table.resolve_claim_requested.connect(self._on_resolve_claim)
         layout.addWidget(self.table, 1)
 
-    def do_search(self, query: str):
+    def do_search(
+        self,
+        query: str,
+        category_id: str | None = None,
+        subcategory_id: str | None = None,
+        scope_label: str = "",
+    ):
         self._last_query = query
-        self.title_label.setText(f'Search Results for "{query}"')
+        self._last_category_id = category_id
+        self._last_subcategory_id = subcategory_id
+        self._last_scope_label = scope_label
+
+        if scope_label:
+            self.title_label.setText(f'Search Results for "{query}" in {scope_label}')
+        else:
+            self.title_label.setText(f'Search Results for "{query}"')
         try:
-            products = self.search_service.search(query)
-            self.info_label.setText(f"Found {len(products)} result(s)")
+            products = self.search_service.search(
+                query, category_id=category_id, subcategory_id=subcategory_id
+            )
+            scope_suffix = f" in {scope_label}" if scope_label else ""
+            self.info_label.setText(f"Found {len(products)} result(s){scope_suffix}")
             self.table.load_products(products)
         except Exception as e:
             self.info_label.setText("Search failed")
@@ -60,30 +79,29 @@ class SearchPage(QWidget):
 
     def refresh_data(self):
         if self._last_query:
-            self.do_search(self._last_query)
+            self.do_search(
+                self._last_query,
+                category_id=self._last_category_id,
+                subcategory_id=self._last_subcategory_id,
+                scope_label=self._last_scope_label,
+            )
 
     def _on_edit(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 return
-            # We need to figure out the category_id for this product
-            all_pt = self.inventory_service.repo.get_all_product_types()
-            pt_map = {pt.id: pt for pt in all_pt}
-            pt = pt_map.get(product.product_type_id)
-            if not pt:
+
+            # O(1) lookup of (Subcategory, Category) for this product's type.
+            # Built once and cached, shared across the whole app.
+            resolver = self.inventory_service.repo.get_product_type_resolver()
+            resolved = resolver.get(product.product_type_id)
+            if not resolved:
                 return
-            all_sub = self.inventory_service.repo.get_all_subcategories()
-            sub_map = {s.id: s for s in all_sub}
-            sub = sub_map.get(pt.subcategory_id)
-            if not sub:
-                return
+            sub, cat = resolved
 
             phone_details = None
-            categories = self.inventory_service.get_categories()
-            cat_map = {c.id: c for c in categories}
-            cat = cat_map.get(sub.category_id)
-            if cat and cat.name == "Phones":
+            if cat.name == "Phones":
                 phone_details = self.inventory_service.get_phone_details(product_id)
 
             dialog = DynamicFormDialog(
@@ -113,7 +131,7 @@ class SearchPage(QWidget):
 
     def _on_buy(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 return
             dialog = TransactionDialog(product, "purchase", parent=self)
@@ -124,7 +142,7 @@ class SearchPage(QWidget):
 
     def _on_sell(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 return
             dialog = TransactionDialog(product, "sale", parent=self)
@@ -135,7 +153,7 @@ class SearchPage(QWidget):
 
     def _on_view(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product: return
             phone_details = self.inventory_service.get_phone_details(product_id)
             from src.ui.components.product_info_dialog import ProductInfoDialog
@@ -146,7 +164,7 @@ class SearchPage(QWidget):
 
     def _on_return(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 return
             dialog = ReturnDialog(product, parent=self)
@@ -157,7 +175,7 @@ class SearchPage(QWidget):
 
     def _on_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 return
             phone_details = self.inventory_service.get_phone_details(product_id)
@@ -169,7 +187,7 @@ class SearchPage(QWidget):
 
     def _on_resolve_claim(self, product_id: str):
         try:
-            product = self.inventory_service.get_product_by_id(product_id)
+            product = self.table.get_cached_product(product_id) or self.inventory_service.get_product_by_id(product_id)
             if not product:
                 return
             phone_details = self.inventory_service.get_phone_details(product_id)

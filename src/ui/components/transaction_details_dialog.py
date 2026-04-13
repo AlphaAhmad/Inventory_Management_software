@@ -1,16 +1,19 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
-    QScrollArea, QWidget, QFrame, QPushButton, QGroupBox,
+    QScrollArea, QWidget, QFrame, QPushButton, QGroupBox, QMessageBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from src.models.transaction import Transaction
 from src.models.product import Product, PhoneDetails
+from src.services.transaction_service import TransactionService
 from src.utils.helpers import format_price
 from src.ui.theme import COLORS
 
 
 class TransactionDetailsDialog(QDialog):
     """Read-only dialog showing transaction details + the related product info."""
+
+    reverted = Signal()  # Emitted when the transaction is successfully reverted
 
     TYPE_COLORS = {
         "purchase": "green",
@@ -183,11 +186,76 @@ class TransactionDetailsDialog(QDialog):
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll, 1)
 
-        # Close button
+        # ── Buttons: Revert (left) + Close (right) ──
         btn_layout = QHBoxLayout()
+
+        self.revert_btn = QPushButton("\u21BA  Revert Transaction")
+        self.revert_btn.setMinimumWidth(170)
+        self.revert_btn.setToolTip(
+            "Undo this transaction as if it never happened. "
+            "Only the most recent transaction for a product can be reverted."
+        )
+        self.revert_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {COLORS['red']}; color: #ffffff; "
+            f"border: none; border-radius: 6px; font-weight: bold; padding: 8px 16px; }}"
+            f"QPushButton:hover {{ background-color: #ff85a0; }}"
+            f"QPushButton:disabled {{ background-color: {COLORS['bg_lighter']}; "
+            f"color: {COLORS['text_muted']}; }}"
+        )
+        self.revert_btn.clicked.connect(self._on_revert_clicked)
+        # Only enable if the product still exists — the latest-check happens server-side.
+        self.revert_btn.setEnabled(self.product is not None)
+        btn_layout.addWidget(self.revert_btn)
+
         btn_layout.addStretch()
+
         close_btn = QPushButton("Close")
         close_btn.setMinimumWidth(80)
         close_btn.clicked.connect(self.accept)
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
+
+    def _on_revert_clicked(self):
+        type_label = self.transaction.type.replace("_", " ").title()
+        product_label = ""
+        if self.product:
+            product_label = f"\n\nProduct: {self.product.brand} {self.product.model}".strip()
+
+        # Per-type description of what will happen
+        effect_lines = {
+            "sale": "The sold quantity will be added back to stock. "
+                    "If the product was fully sold, it will return to in-stock.",
+            "purchase": "The purchased quantity will be removed from stock.",
+            "return": "The returned unit will be removed from stock. "
+                      "Note: the product's purchase price (cost basis) was overwritten "
+                      "when the return was recorded and cannot be restored automatically.",
+            "claim": "The product will return to 'sold' status and the claim flag will be cleared.",
+            "claim_resolved": "The product will return to 'claimed' status. "
+                              "If the claim was accepted, the restocked unit will be removed.",
+        }
+        effect = effect_lines.get(self.transaction.type, "The transaction will be deleted.")
+
+        confirm = QMessageBox.question(
+            self, "Revert Transaction?",
+            f"Are you sure you want to revert this {type_label} transaction?{product_label}\n\n"
+            f"{effect}\n\n"
+            f"The transaction record will be permanently deleted. "
+            f"Only the most recent transaction for this product can be reverted.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            TransactionService().revert_transaction(self.transaction.id)
+        except Exception as e:
+            QMessageBox.critical(self, "Revert Failed", str(e))
+            return
+
+        QMessageBox.information(
+            self, "Reverted",
+            f"{type_label} transaction reverted successfully."
+        )
+        self.reverted.emit()
+        self.accept()
