@@ -1,0 +1,43 @@
+# -----------------------
+# Secrets & Environment Variables 
+# (NEVER COMMIT YOUR DB KEYS!)
+# -----------------------
+.env
+.env.*
+
+# -----------------------
+# Virtual Environments
+# -----------------------
+.venv/
+venv/
+env/
+
+# -----------------------
+# PyInstaller & Build Artifacts
+# -----------------------
+build/
+dist/
+*.spec
+
+# -----------------------
+# Python Core
+# -----------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# -----------------------
+# IDEs & Editor configs
+# -----------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -----------------------
+# OS Generated Files
+# -----------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
